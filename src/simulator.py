@@ -53,6 +53,7 @@ def usage():
                     "-c : The prefix of training set profiles, same as the output prefix in read_analysis.py, default = training\n" \
                     "-o : The prefix of output file, default = 'simulated'\n" \
                     "-n : Number of generated reads, default = 20,000 reads\n" \
+                    "-q : The prefix of the quality score files (3 files - 1 match, 1 mismatch, 1 insertion)\n" \
                     "--max_len : Maximum read length, default = Inf\n" \
                     "--min_len : Minimum read length, default = 50\n" \
                     "--perfect: Output perfect reads, no mutations, default = False\n" \
@@ -193,7 +194,7 @@ def read_profile(number, model_prefix, per, max_l, min_l):
         aligned_dict = read_ecdf(align_profile)
         
 
-def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
+def simulation(ref, out, qual_file, dna_type, per, kmer_bias, max_l, min_l):
     global unaligned_length, number_aligned, aligned_dict
     global genome_len, seq_dict, seq_len
     global match_ht_list, align_ratio, ht_dict, match_markov_model
@@ -202,6 +203,24 @@ def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
     sys.stdout.write(strftime("%Y-%m-%d %H:%M:%S") + ": Read in reference genome\n")
     seq_dict = {}
     seq_len = {}
+
+    # Read in quality score files
+    qual_match = ""
+    qual_mismatch = ""
+    qual_insertion = ""
+    with open(qual_file+'.match.dat','r') as infile:
+        for line in infile:
+            qual_match = qual_match + line.strip()
+    with open(qual_file+'.mismatch.dat','r') as infile:
+        for line in infile:
+            qual_mismatch = qual_mismatch + line.strip()
+    with open(qual_file+'.insertion.dat','r') as infile:
+        for line in infile:
+            qual_insertion = qual_insertion + line.strip()
+
+    #reverse 
+    #qu = {'match':qual_match[::-1], 'mismatch':qual_mismatch[::-1], 'insertion':qual_insertion[::-1]}
+    qu = {'match':qual_match, 'mismatch':qual_mismatch, 'insertion':qual_insertion}
 
     # Read in the reference genome
     with open(ref, 'r') as infile:
@@ -229,7 +248,7 @@ def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
 
     # Start simulation
     sys.stdout.write(strftime("%Y-%m-%d %H:%M:%S") + ": Start simulation of random reads\n")
-    out_reads = open(out + "_reads.fasta", 'w')
+    out_reads = open(out + "_reads.fastq", 'w')
     out_error = open(out + "_error_profile", 'w')
     out_error.write("Seq_name\tSeq_pos\terror_type\terror_length\tref_base\tseq_base\n")
 
@@ -240,7 +259,7 @@ def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
         unaligned, error_dict = unaligned_error_list(unaligned, error_par)
         new_read, new_read_name = extract_read(dna_type, unaligned)
         new_read_name = new_read_name + "_unaligned_" + str(i)
-        read_mutated = mutate_read(new_read, new_read_name, out_error, error_dict, kmer_bias, False)
+        read_mutated, new_qual = mutate_read(new_read, new_read_name, out_error, error_dict, kmer_bias, qu, False)
         
         # Reverse complement half of the reads
         p = random.random()
@@ -250,7 +269,7 @@ def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
         else:
             new_read_name += "_F"
         out_reads.write(">" + new_read_name + "_0_" + str(unaligned) + "_0" + '\n')
-        out_reads.write(read_mutated + "\n")
+        out_reads.write(read_mutated + '\n' + "+" + '\n' + str(new_qual) + '\n')
 
     del unaligned_length
 
@@ -320,7 +339,7 @@ def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
         new_read_name = new_read_name + "_aligned_" + str(i + num_unaligned_length)
 
         # Mutate read
-        read_mutated = mutate_read(new_read, new_read_name, out_error, error_dict, kmer_bias)
+        read_mutated, new_qual = mutate_read(new_read, new_read_name, out_error, error_dict, kmer_bias, qu)
 
         # Reverse complement half of the reads
         p = random.random()
@@ -334,14 +353,18 @@ def simulation(ref, out, dna_type, per, kmer_bias, max_l, min_l):
         for x in xrange(head):
             new_base = random.choice(BASES)
             read_mutated = new_base + read_mutated
+        new_qs = new_qu(qu['match'], head)
+        new_qual = new_qs + new_qual
 
         for x in xrange(tail):
             new_base = random.choice(BASES)
             read_mutated = read_mutated + new_base
+        new_qs = new_qu(qu['match'], tail)
+        new_qual = new_qual + new_qs
 
         out_reads.write(">" + new_read_name + "_" + str(head) + "_" + str(middle_ref) + "_" +
                         str(tail) + '\n')
-        out_reads.write(read_mutated + '\n')
+        out_reads.write(read_mutated + '\n' + "+" + '\n' + str(new_qual) + '\n')
 
         i += 1
 
@@ -509,7 +532,24 @@ def error_list(m_ref, m_model, m_ht_list, error_p, trans_p):
     return l_new, middle_ref, e_dict
 
 
-def mutate_read(read, read_name, error_log, e_dict, bias, aligned=True):
+#def qual_sim(prev, curr, len):
+#    if prev == 'match' and cur == 'ins':
+#        print(maaaa)
+#    elif prev == 'ins' and cur == 'match':
+
+def new_qu(qset, readlen):
+    qual = ""
+    qual_pos = random.randint(0, len(qset)-2)
+    for i in (range(readlen)):
+        if qual_pos+i > len(qset):
+            qual_pos = 0 #wrap to start
+        qual += qset[qual_pos + i]
+    return qual
+
+def mutate_read(read, read_name, error_log, e_dict, bias, qu, aligned=True):
+    #prev = "match"
+    qual = new_qu(qu['match'], len(read))
+
     for key in sorted(e_dict.keys(), reverse=True):
         val = e_dict[key]
         key = int(round(key))
@@ -527,11 +567,14 @@ def mutate_read(read, read_name, error_log, e_dict, bias, aligned=True):
                 if not bias or not re.search("AAAAAA+|TTTTTT+|CCCCCC+|GGGGGG+", check_kmer):
                     break
             new_read = read[:key] + new_bases + read[key + val[1]:]
+            new_qs = new_qu(qu['mismatch'], len(new_bases))
+            new_qual = qual[:key] + new_qs + qual[key + val[1]:] #change new bases to ... whatever
 
         elif val[0] == "del":
             new_bases = val[1] * "-"
             ref_base = read[key: key + val[1]]
             new_read = read[: key] + read[key + val[1]:]
+            new_qual = qual[: key] + qual[key + val[1]:]
 
         elif val[0] == "ins":
             ref_base = val[1] * "-"
@@ -544,8 +587,11 @@ def mutate_read(read, read_name, error_log, e_dict, bias, aligned=True):
                 if not bias or not re.search("AAAAAA+|TTTTTT+|CCCCCC+|GGGGGG+", check_kmer):
                     break
             new_read = read[:key] + new_bases + read[key:]
+            new_qs = new_qu(qu['insertion'], len(new_bases))
+            new_qual = qual[:key] + new_qs + qual[key:]
 
         read = new_read
+        qual = new_qual
 
         if aligned and val[0] != "match":
             error_log.write(read_name + "\t" + str(key) + "\t" + val[0] + "\t" + str(val[1]) +
@@ -558,7 +604,7 @@ def mutate_read(read, read_name, error_log, e_dict, bias, aligned=True):
         read = re.sub("TTTTTT+", "TTTTT", read)
         read = re.sub("GGGGGG+", "GGGGG", read)
 
-    return read
+    return read, qual
 
 
 def case_convert(s_dict):
@@ -583,6 +629,7 @@ def main():
     ref = ""
     model_prefix = "training"
     out = "simulated"
+    qual_file = "default"
     number = 20000
     perfect = False
     # ins, del, mis rate represent the weight tuning in mix model
@@ -603,7 +650,7 @@ def main():
             usage()
             sys.exit(1)
         try:
-            opts, args = getopt.getopt(sys.argv[2:], "hr:c:o:n:i:d:m:",
+            opts, args = getopt.getopt(sys.argv[2:], "hr:c:o:n:i:d:m:q:",
                                        ["max_len=", "min_len=", "perfect", "KmerBias"])
         except getopt.GetoptError:
             usage()
@@ -615,6 +662,8 @@ def main():
                 model_prefix = arg
             elif opt == "-o":
                 out = arg
+            elif opt == "-q":
+                qual_file = arg
             elif opt == "-n":
                 number = int(arg)
             elif opt == "-i":
@@ -655,7 +704,7 @@ def main():
     # Read in reference genome and generate simulated reads
     read_profile(number, model_prefix, perfect, max_readlength, min_readlength)
 
-    simulation(ref, out, dna_type, perfect, kmer_bias, max_readlength, min_readlength)
+    simulation(ref, out, qual_file, dna_type, perfect, kmer_bias, max_readlength, min_readlength)
 
     sys.stdout.write(strftime("%Y-%m-%d %H:%M:%S") + ": Finished!")
     sys.stdout.close()
