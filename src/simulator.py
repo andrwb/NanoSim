@@ -249,6 +249,7 @@ def simulation(ref, out, qual_file, dna_type, per, kmer_bias, max_l, min_l):
     # Start simulation
     sys.stdout.write(strftime("%Y-%m-%d %H:%M:%S") + ": Start simulation of random reads\n")
     out_reads = open(out + "_reads.fastq", 'w')
+    out_reads_prf = open(out + "_prf_reads.fastq", 'w')
     out_error = open(out + "_error_profile", 'w')
     out_error.write("Seq_name\tSeq_pos\terror_type\terror_length\tref_base\tseq_base\n")
 
@@ -260,7 +261,7 @@ def simulation(ref, out, qual_file, dna_type, per, kmer_bias, max_l, min_l):
         new_read, new_read_name = extract_read(dna_type, unaligned)
         new_read_name = new_read_name + "_unaligned_" + str(i)
         read_mutated, new_qual = mutate_read(new_read, new_read_name, out_error, error_dict, kmer_bias, qu, False)
-        
+
         # Reverse complement half of the reads
         p = random.random()
         if p < 0.5:
@@ -268,6 +269,10 @@ def simulation(ref, out, qual_file, dna_type, per, kmer_bias, max_l, min_l):
             new_read_name += "_R"
         else:
             new_read_name += "_F"
+
+        out_reads_prf.write(">" + "-ulprf-" + new_read_name + "_0_" + str(unaligned) + "_0" + '\n')
+        out_reads_prf.write(new_read + '\n') #+ "+" + '\n' + str(new_qual) + '\n')
+
         out_reads.write(">" + new_read_name + "_0_" + str(unaligned) + "_0" + '\n')
         out_reads.write(read_mutated + '\n' + "+" + '\n' + str(new_qual) + '\n')
 
@@ -362,6 +367,12 @@ def simulation(ref, out, qual_file, dna_type, per, kmer_bias, max_l, min_l):
         new_qs = new_qu(qu['match'], tail)
         new_qual = new_qual + new_qs
 
+
+        out_reads_prf.write(">" + "-alprf-" + new_read_name + "_" + str(head) + "_" + str(middle_ref) + "_" +
+                        str(tail) + '\n')
+        out_reads_prf.write(new_read + '\n') #+ "+" + '\n' + str(new_qual) + '\n')
+
+
         out_reads.write(">" + new_read_name + "_" + str(head) + "_" + str(middle_ref) + "_" +
                         str(tail) + '\n')
         out_reads.write(read_mutated + '\n' + "+" + '\n' + str(new_qual) + '\n')
@@ -369,6 +380,7 @@ def simulation(ref, out, qual_file, dna_type, per, kmer_bias, max_l, min_l):
         i += 1
 
     out_reads.close()
+    out_reads_prf.close()
     out_error.close()
 
     align_ratio.clear()
@@ -541,7 +553,7 @@ def new_qu(qset, readlen):
     qual = ""
     qual_pos = random.randint(0, len(qset)-2)
     for i in (range(readlen)):
-        if qual_pos+i > len(qset):
+        if qual_pos+i > len(qset)-1:
             qual_pos = 0 #wrap to start
         qual += qset[qual_pos + i]
     return qual
